@@ -1,0 +1,16 @@
+version: '3.8'
+services:
+  db:
+    # Postgres database with pgvector pre-installed
+    image: pgvector/pgvector:pg16
+    container_name: postgres_vector_db
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: vectors_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+volumes:
+  postgres_data:
