@@ -19,7 +19,7 @@ with engine.connect() as conn:
     conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
     conn.commit()
 
-#row that will be stored in database, each row will have an id, embedding and text
+# row that will be stored in database, each row will have an id, file_name, embedding and text
 class FileVector(Base):
     __tablename__ = "file_vectors"
 
@@ -28,28 +28,28 @@ class FileVector(Base):
     embedding = Column(Vector(dim=384))
     text = Column(String)
 
- 
 Base.metadata.create_all(bind=engine)
 
 class QueryRequest(BaseModel):
     question: str
 
 
-async def split_text(text, chunk_size = 1000):
-    chunk = []
+async def split_text(text, chunk_size=1000):
+    chunks = []
     start = 0
     while start < len(text):
         end = start + chunk_size
-        chunk.append(text[start:end])
+        chunks.append(text[start:end])
         start = end
-    return chunk
+    return chunks
 
 
 async def text_to_vector(chunks):
     vectors = model.encode(chunks)
     return vectors.tolist()
 
-#creates a folder to store the uploaded files
+
+# creates a folder to store the uploaded files
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app = FastAPI()
@@ -64,14 +64,13 @@ async def upload_file(file: UploadFile = File(...)):
             await buffer.write(content)
 
     reader = PdfReader(filelocation)
-    text = ""
+    text_content = ""
 
     for page in reader.pages:
-        text += page.extract_text() or ""
+        text_content += page.extract_text() or ""
 
-    chunks = await split_text(text)
+    chunks = await split_text(text_content)
     file_vectors = await text_to_vector(chunks)
-
 
     db = SessionLocal()
 
@@ -85,7 +84,6 @@ async def upload_file(file: UploadFile = File(...)):
     return {"filename": file.filename, "saved_chunks": len(chunks)}
 
 
-
 @app.get("/users/")
 async def get_all_chunks():
     db = SessionLocal()
@@ -95,10 +93,12 @@ async def get_all_chunks():
         {
             "id": chunk.id,
             "text": chunk.text,
-            "embedding": chunk.embedding if chunk.embedding is not None else None
+            # .tolist() converts the NumPy array to a standard list so FastAPI doesn't crash
+            "embedding": chunk.embedding.tolist() if chunk.embedding is not None else None
         }
         for chunk in chunks
     ]
+
 
 @app.post("/find_similiar_chunks/")
 async def find_similiar_chunks(question: QueryRequest):
@@ -121,7 +121,3 @@ async def find_similiar_chunks(question: QueryRequest):
         })
 
     return similarities
-
-
-
-
