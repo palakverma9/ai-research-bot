@@ -8,6 +8,12 @@ from sqlalchemy import create_engine, Column, Integer, String, text
 from pgvector.sqlalchemy import Vector
 from pydantic import BaseModel
 
+from dotenv import load_dotenv
+load_dotenv()
+
+from google import genai
+ai_client = genai.Client()
+
 model = SentenceTransformer('all-MiniLM-L6-v2')
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/vectors_db")
@@ -34,6 +40,7 @@ class QueryRequest(BaseModel):
     question: str
 
 
+
 async def split_text(text, chunk_size=1000):
     chunks = []
     start = 0
@@ -47,6 +54,7 @@ async def split_text(text, chunk_size=1000):
 async def text_to_vector(chunks):
     vectors = model.encode(chunks)
     return vectors.tolist()
+
 
 
 # creates a folder to store the uploaded files
@@ -92,32 +100,63 @@ async def get_all_chunks():
     return [
         {
             "id": chunk.id,
+            "file_name": chunk.file_name,
             "text": chunk.text,
-            # .tolist() converts the NumPy array to a standard list so FastAPI doesn't crash
-            "embedding": chunk.embedding.tolist() if chunk.embedding is not None else None
+            
         }
         for chunk in chunks
     ]
 
 
-@app.post("/find_similiar_chunks/")
-async def find_similiar_chunks(question: QueryRequest):
+@app.post("/ask_question/")
+async def ask_question(question: QueryRequest):
     question_vector = (await text_to_vector([question.question]))[0]
 
     db = SessionLocal()
 
     distance_fn = FileVector.embedding.cosine_distance(question_vector)
-    results = db.query(FileVector, distance_fn).order_by(distance_fn).limit(3).all()
+    results = db.query(FileVector, distance_fn).order_by(distance_fn).limit(10).all()
     db.close()
     
     similarities = []
-    for row, dist in results:
-        similarity_score = 1.0 - float(dist)
-        similarities.append({
-            "id": row.id,
-            "file_name": row.file_name,
-            "text": row.text,
-            "similiarity": similarity_score
-        })
+    seen_text = set()
 
-    return similarities
+    for row, dist in results:
+        normalised_text = row.text.strip()
+
+        if normalised_text not in seen_text:
+            seen_text.add(normalised_text)
+
+            similarity_score = 1.0 - float(dist)
+            similarities.append({
+                "id":row.id,
+                "file_name":row.file_name,
+                "text":row.text,
+                "similiarity":similarity_score
+            })
+        if len(similarities) == 3:
+            break
+    
+    context_texts = [item["text"] for item in similarities]
+    context = "\n---\n".join(context_texts)
+
+
+    prompt = f"""You are a helpful AI assistant. Use the following context retrieved from the uploaded documents to answer the user's question. 
+If the answer cannot be found in the context, say "I cannot find the answer in the provided documents."
+
+Context:
+{context}
+User Question: {question.question}
+
+Answer:"""
+    
+
+    response = ai_client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt
+    )
+    return {
+        "answer": response.text,
+        "context_used": similarities
+    }
+
