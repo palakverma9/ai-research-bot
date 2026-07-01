@@ -1,7 +1,5 @@
-version: '3.8'
 services:
   db:
-    # Postgres database with pgvector pre-installed
     image: pgvector/pgvector:pg16
     container_name: postgres_vector_db
     ports:
@@ -12,5 +10,29 @@ services:
       POSTGRES_DB: vectors_db
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d vectors_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build: .
+    image: custom-fastapi-app:latest 
+    container_name: fastapi_vector_app
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+      - /app/__pycache__
+      - /app/uploads
+    environment:
+      # Tell the app to connect to the db service instead of localhost
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/vectors_db
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    depends_on:
+      db:
+        condition: service_healthy
+
 volumes:
   postgres_data:

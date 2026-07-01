@@ -1,12 +1,18 @@
 import os
 import aiofiles
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, HTTPException
 from pypdf import PdfReader
 from sentence_transformers import SentenceTransformer
 from sqlalchemy.orm import sessionmaker, declarative_base
 from sqlalchemy import create_engine, Column, Integer, String, text
 from pgvector.sqlalchemy import Vector
 from pydantic import BaseModel
+
+#for semantic chunking
+import re
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
+
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -41,14 +47,42 @@ class QueryRequest(BaseModel):
 
 
 
-async def split_text(text, chunk_size=1000):
+async def split_text(text):
+    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+    if len(sentences) <= 1:
+        return sentences
+    
+    sentence_embeddings = model.encode(sentences)
+
+    similarities = []
+    for i in range(len(sentence_embeddings) - 1):
+        vec1 = sentence_embeddings[i].reshape(1, -1)
+        vec2 = sentence_embeddings[i + 1].reshape(1, -1)
+        sim = cosine_similarity(vec1, vec2)[0][0]
+        similarities.append(sim)
+    
+    distances = [1.0 - sim for sim in similarities]
+
+    threshold = np.percentile(distances, 85)
+
     chunks = []
-    start = 0
-    while start < len(text):
-        end = start + chunk_size
-        chunks.append(text[start:end])
-        start = end
+    current_chunk = [sentences[0]]
+    for i in range(len(sentences) - 1):
+        distance = distances[i]
+        
+    
+        if distance > threshold:
+            chunks.append(" ".join(current_chunk))
+            current_chunk = [sentences[i + 1]]
+        else:
+            current_chunk.append(sentences[i + 1])
+
+    if current_chunk:
+        chunks.append(" ".join(current_chunk))
+
     return chunks
+
+    
 
 
 async def text_to_vector(chunks):
@@ -57,7 +91,6 @@ async def text_to_vector(chunks):
 
 
 
-# creates a folder to store the uploaded files
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app = FastAPI()
@@ -65,29 +98,49 @@ app = FastAPI()
 
 @app.post("/uploads/")
 async def upload_file(file: UploadFile = File(...)):
+
+    if not file.filename.endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Uploaded file is not in pdf format.")
+    
+   
     filelocation = os.path.join(UPLOAD_FOLDER, file.filename)
+    
+    try:
+        async with aiofiles.open(filelocation, "wb") as buffer:
+            while content := await file.read(1024 * 1024):
+                await buffer.write(content)
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to write file to disk: {str(e)}")
 
-    async with aiofiles.open(filelocation, "wb") as buffer:
-        while content := await file.read(1024 * 1024):
-            await buffer.write(content)
+    
+    try:
+        reader = PdfReader(filelocation)
+        text_content = ""
 
-    reader = PdfReader(filelocation)
-    text_content = ""
+        for page in reader.pages:
+          text_content += page.extract_text() or ""
 
-    for page in reader.pages:
-        text_content += page.extract_text() or ""
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to write file to disk: {str(e)}")
+    
+    try:
+        chunks = await split_text(text_content)
+        file_vectors = await text_to_vector(chunks)
 
-    chunks = await split_text(text_content)
-    file_vectors = await text_to_vector(chunks)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed during vector embedding: {str(e)}")
+    
+    try:
+        db = SessionLocal()
+        for vector, chunk in zip(file_vectors, chunks):
+            file_vector = FileVector(file_name=file.filename, embedding=vector, text=chunk)
+            db.add(file_vector)
+        db.commit()
+        db.close()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database save operation failed: {str(e)}")
 
-    db = SessionLocal()
-
-    for vector, chunk in zip(file_vectors, chunks):
-        file_vector = FileVector(file_name=file.filename, embedding=vector, text=chunk)
-        db.add(file_vector)
-
-    db.commit()
-    db.close()
 
     return {"filename": file.filename, "saved_chunks": len(chunks)}
 
@@ -141,8 +194,8 @@ async def ask_question(question: QueryRequest):
     context = "\n---\n".join(context_texts)
 
 
-    prompt = f"""You are a helpful AI assistant. Use the following context retrieved from the uploaded documents to answer the user's question. 
-If the answer cannot be found in the context, say "I cannot find the answer in the provided documents."
+    prompt = f"""You are a helpful structural steel design assistant. Use the following context retrieved from the uploaded documents to answer the user's question. 
+If a specific standard code parameter, formula, or safety factor (like γm0) is mentioned in the context but its numerical value is missing, you are allowed to use your pre-trained knowledge of the IS 800 steel code to fill in the constant and calculate the answer. State clearly if you used your pre-trained knowledge for a constant."
 
 Context:
 {context}
