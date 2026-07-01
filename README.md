@@ -27,6 +27,8 @@ This project implements **Dynamic Semantic Chunking** and **Database-Native Vect
 | **PostgreSQL + pgvector** | Vector Database | Native storage and mathematical similarity search of 384-dimension vector embeddings. |
 | **SentenceTransformers** | ML Embedding Model | Local execution of the `all-MiniLM-L6-v2` model for sentence-level embeddings. |
 | **Google Gemini API** | Large Language Model | Generates context-aware, structured answers using `gemini-2.5-flash`. |
+| **Langfuse (v4)** | Observability / Telemetry | OpenTelemetry-native RAG pipeline monitoring (latency, prompts, and token costs). |
+| **Sentry** | Exception Tracking | Automated real-time backend crash reporting and error alerting. |
 | **Docker & Docker Compose** | DevOps / Orchestration | Isolates the PostgreSQL database container with pgvector extension enabled. |
 | **SQLAlchemy** | ORM | Database-to-object mapping and SQL query abstraction. |
 | **Pydantic V2** | Data Validation | Runtime type validation for API request and response models. |
@@ -56,6 +58,8 @@ graph TD
 
 * **Dynamic Semantic Splitter**: Tokenizes text into logical sentences, analyzes consecutive distance metrics, and splits documents dynamically where topics shift.
 * **Database-Level Distance Math**: Replaces local Python similarity computations with SQL-native cosine distance lookups (`FileVector.embedding.cosine_distance`).
+* **LLM Telemetry (Langfuse v4)**: OpenTelemetry-native tracing of prompt templates, vector similarity search latencies, and Gemini token counts/costs.
+* **Real-time Exception Tracking (Sentry)**: Captures unhandled backend exceptions, tracebacks, and database drops instantly.
 * **Asynchronous File Streaming**: Processes large files asynchronously with `aiofiles` and non-blocking I/O.
 * **Robust Scaffolding**: Defensive programming with wrapped database sessions, schema validation, and HTTP-compliant error payloads (e.g. 400, 422, 500 status codes).
 * **Automatic Schema Initialization**: Auto-activates `CREATE EXTENSION IF NOT EXISTS vector` on database startup.
@@ -73,6 +77,14 @@ graph TD
 Create a `.env` file in the root directory:
 ```env
 GEMINI_API_KEY="your-gemini-api-key-here"
+
+# Langfuse Observability
+LANGFUSE_PUBLIC_KEY="pk-lf-..."
+LANGFUSE_SECRET_KEY="sk-lf-..."
+LANGFUSE_HOST="https://cloud.langfuse.com"
+
+# Sentry Monitoring (Optional)
+SENTRY_DSN="your-sentry-dsn-here"
 ```
 
 ### 2. Start the Vector Database (Docker)
