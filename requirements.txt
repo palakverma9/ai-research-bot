@@ -13,3 +13,4 @@ python-dotenv
 python-multipart
 langfuse
 sentry-sdk[fastapi]
+nltk>=3.8.1
