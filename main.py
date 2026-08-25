@@ -1,5 +1,4 @@
 import asyncio
-import re
 import os
 import aiofiles
 from fastapi import Depends, FastAPI, UploadFile, File, HTTPException
@@ -177,7 +176,7 @@ async def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db
                 span.update(output={"chunks_count": len(chunks)})
             except Exception as e:
                 span.update(level="ERROR", status_message=str(e))
-                raise HTTPException(status_code=500, detail=f"Failed during vector embedding: {str(e)}")
+                raise HTTPException(status_code=500, detail=f"Failed during semantic chunking: {str(e)}")
         
         # Span 4: Database Save
         with langfuse_client.start_as_current_observation(name="database_save", as_type="span") as span:
@@ -282,34 +281,45 @@ async def ask_question(question: QueryRequest, db: Session = Depends(get_db)):
 
     Answer:"""
         
-        # Generation: Gemini LLM Call
+        # Generation: Gemini LLM Call with dynamic model fallback
+        candidate_models = ["gemini-3.6-flash", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+        response = None
+        last_error = None
+
         with langfuse_client.start_as_current_observation(
             name="gemini_generation",
             as_type="generation",
-            model="gemini-3.7-flash",
+            model="gemini-3.6-flash",
             input=prompt,
         ) as generation:
-            try:
-                response = ai_client.models.generate_content(
-                    model="gemini-3.7-flash",
-                    contents=prompt
-                )
+            for mod in candidate_models:
+                try:
+                    response = ai_client.models.generate_content(
+                        model=mod,
+                        contents=prompt
+                    )
+                    generation.update(model=mod)
+                    break
+                except Exception as e:
+                    last_error = e
+                    continue
+            
+            if not response:
+                generation.update(level="ERROR", status_message=str(last_error))
+                raise HTTPException(status_code=500, detail=f"Gemini generation failed: {str(last_error)}")
+
+            usage = None
+            if hasattr(response, 'usage_metadata') and response.usage_metadata:
+                usage = {
+                    "input_tokens": response.usage_metadata.prompt_token_count,
+                    "output_tokens": response.usage_metadata.candidates_token_count,
+                    "total_tokens": response.usage_metadata.total_token_count,
+                }
                 
-                usage = None
-                if hasattr(response, 'usage_metadata') and response.usage_metadata:
-                    usage = {
-                        "input_tokens": response.usage_metadata.prompt_token_count,
-                        "output_tokens": response.usage_metadata.candidates_token_count,
-                        "total_tokens": response.usage_metadata.total_token_count,
-                    }
-                    
-                generation.update(
-                    output=response.text,
-                    usage=usage
-                )
-            except Exception as e:
-                generation.update(level="ERROR", status_message=str(e))
-                raise HTTPException(status_code=500, detail=f"Gemini generation failed: {str(e)}")
+            generation.update(
+                output=response.text,
+                usage=usage
+            )
 
         return {
             "answer": response.text,
