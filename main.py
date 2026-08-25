@@ -286,12 +286,12 @@ async def ask_question(question: QueryRequest, db: Session = Depends(get_db)):
         with langfuse_client.start_as_current_observation(
             name="gemini_generation",
             as_type="generation",
-            model="gemini-1.5-flash",
+            model="gemini-2.0-flash",
             input=prompt,
         ) as generation:
             try:
                 response = ai_client.models.generate_content(
-                    model="gemini-1.5-flash",
+                    model="gemini-2.0-flash",
                     contents=prompt
                 )
                 
